@@ -479,36 +479,8 @@ def create_stats_cards():
     </div>
     """
 
-# Dados de municípios por UF (amostra)
-MUNICIPIOS_POR_UF = {
-    'AC': ['RIO BRANCO', 'CRUZEIRO DO SUL', 'SENA MADUREIRA', 'TARAUACA'],
-    'AL': ['MACEIO', 'ARAPIRACA', 'PALMEIRA DOS INDIOS', 'RIO LARGO'],
-    'AP': ['MACAPA', 'SANTANA', 'LARANJAL DO JARI', 'OIAPOQUE'],
-    'AM': ['MANAUS', 'PARINTINS', 'ITACOATIARA', 'MANACAPURU'],
-    'BA': ['SALVADOR', 'FEIRA DE SANTANA', 'VITORIA DA CONQUISTA', 'CAMAÇARI'],
-    'CE': ['FORTALEZA', 'CAUCAIA', 'JUAZEIRO DO NORTE', 'MARACANAÚ'],
-    'DF': ['BRASILIA', 'GAMA', 'TAGUATINGA', 'CEILANDIA'],
-    'ES': ['VITORIA', 'VILA VELHA', 'SERRA', 'CARIACICA'],
-    'GO': ['GOIANIA', 'APARECIDA DE GOIANIA', 'ANAPOLIS', 'RIO VERDE'],
-    'MA': ['SAO LUIS', 'IMPERATRIZ', 'SAO JOSE DE RIBAMAR', 'TIMON'],
-    'MT': ['CUIABA', 'VARZEA GRANDE', 'RONDONOPOLIS', 'SINOP'],
-    'MS': ['CAMPO GRANDE', 'DOURADOS', 'TRES LAGOAS', 'CORUMBA'],
-    'MG': ['BELO HORIZONTE', 'UBERLANDIA', 'CONTAGEM', 'JUIZ DE FORA'],
-    'PA': ['BELEM', 'ANANINDEUA', 'SANTAREM', 'MARABA'],
-    'PB': ['JOAO PESSOA', 'CAMPINA GRANDE', 'SANTA RITA', 'PATOS'],
-    'PR': ['CURITIBA', 'LONDRINA', 'MARINGA', 'PONTA GROSSA'],
-    'PE': ['RECIFE', 'JABOATAO DOS GUARARAPES', 'OLINDA', 'CARUARU'],
-    'PI': ['TERESINA', 'PARNAIBA', 'PICOS', 'PIRIPIRI'],
-    'RJ': ['RIO DE JANEIRO', 'SAO GONCALO', 'DUQUE DE CAXIAS', 'NOVA IGUACU'],
-    'RN': ['NATAL', 'MOSSORO', 'PARNAMIRIM', 'SAO GONCALO DO AMARANTE'],
-    'RS': ['PORTO ALEGRE', 'CAXIAS DO SUL', 'PELOTAS', 'CANOAS'],
-    'RO': ['PORTO VELHO', 'JI-PARANA', 'ARIQUEMES', 'VILHENA'],
-    'RR': ['BOA VISTA', 'RORAINOPOLIS', 'CARACARAI', 'ALTO ALEGRE'],
-    'SC': ['FLORIANOPOLIS', 'JOINVILLE', 'BLUMENAU', 'SAO JOSE'],
-    'SP': ['SAO PAULO', 'GUARULHOS', 'CAMPINAS', 'SAO BERNARDO DO CAMPO'],
-    'SE': ['ARACAJU', 'NOSSA SENHORA DO SOCORRO', 'LAGARTO', 'ITABAIANA'],
-    'TO': ['PALMAS', 'ARAGUAINA', 'GURUPI', 'PORTO NACIONAL']
-}
+# Carregar dados de municípios por UF do arquivo JSON
+MUNICIPIOS_POR_UF = load_json_data('municipios_por_uf.json')
 
 # API para retornar municípios por UF
 @rt("/api/municipios/{uf}")
@@ -703,8 +675,9 @@ def get():
 # Rota de predição
 @rt("/prediction")
 def get():
-    uf_options = ['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO']
-    condicoes = ['Ceu Claro', 'Chuva', 'Garoa/Chuvisco', 'Granizo', 'Nevoeiro/Neblina', 'Nublado', 'Sol', 'Vento']
+    # Carregar dados dos arquivos JSON
+    uf_options = load_json_data('uf_options.json')
+    condicoes = load_json_data('condicoes_metereologicas_options.json')
     
     return Html(
         Head(
