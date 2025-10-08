@@ -1,0 +1,10 @@
+python-fasthtml
+uvicorn
+plotly
+folium
+pandas
+numpy
+lightgbm
+scikit-learn
+holidays
+geopandas
