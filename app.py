@@ -1,4 +1,5 @@
 from fasthtml.common import *
+from dashboard import create_heatmap 
 import json
 import random
 from datetime import datetime, timedelta
@@ -336,6 +337,13 @@ def get_full_css():
             padding: 15px;
         }
         
+        /* Heatmap container adjustments for folium */
+        #heatmap-container iframe {
+            width: 100% !important;
+            height: 400px !important;
+            border: none !important;
+        }
+        
 
         
         /* Prediction result */
@@ -488,7 +496,7 @@ def get_municipios(uf: str):
     municipios = MUNICIPIOS_POR_UF.get(uf.upper(), [])
     return {"municipios": municipios}
 
-# Rota principal - Dashboard
+# Rota principal - Dashboard (com heatmap integrado)
 @rt("/")
 def get():
     return Html(
@@ -506,7 +514,46 @@ def get():
                 Div(
                     NotStr(create_stats_cards()),
                     
-                    # Gráficos lado a lado ocupando largura total
+                    # Bloco do Heatmap (usa create_heatmap do dashboard.py)
+                    Div(
+                        Div(
+                            Div(
+                                Div(
+                                    H5("Mapa de Calor - Acidentes por Região"),
+                                    cls="card-header"
+                                ),
+                                Div(
+                                    # Insere diretamente o HTML retornado pela função create_heatmap()
+                                    NotStr(create_heatmap()),
+                                    cls="card-body p-0",
+                                    id="heatmap-container"
+                                ),
+                                cls="card"
+                            ),
+                            cls="col-md-8"
+                        ),
+                        Div(
+                            Div(
+                                Div(
+                                    H5("Informações Rápidas", cls="card-header"),
+                                    Div(
+                                        Div(
+                                            Div("Última atualização", cls="stats-label"),
+                                            Div(datetime.now().strftime("%d/%m/%Y %H:%M"), cls="stats-number")
+                                        ),
+                                        cls="card-body"
+                                    ),
+                                    cls="card"
+                                ),
+                                cls="col-md-4"
+                            ),
+                            cls="row mb-4"
+                        ),
+                        
+                        cls="row mb-4"
+                    ),
+
+                    # Gráficos lado a lado ocupando largura total (Chart.js)
                     Div(
                         Div(
                             Div(
@@ -544,8 +591,6 @@ def get():
                         ),
                         cls="chart-row"
                     ),
-                    
-
                     
                     cls="content-area"
                 ),
@@ -759,9 +804,7 @@ def get():
                                     Li("📊 Dados históricos de acidentes"),
                                     Li("🎯 Padrões sazonais e temporais")
                                 ),
-                                Hr(),
-                                H6("Precisão do Modelo", cls="text-success mb-3"),
-                                P("Nosso modelo possui uma precisão de 82,27% baseada em dados históricos da PRF."),
+
                                 cls="card-body"
                             ),
                             cls="card"

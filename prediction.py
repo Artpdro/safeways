@@ -2,7 +2,7 @@ from fasthtml.common import *
 import json
 from datetime import datetime, date
 
-# Carregar dados JSON
+# Carregar dados JSON       
 def load_json_data():
     with open('uf_options.json', 'r', encoding='utf-8') as f:
         uf_options = json.load(f)

@@ -5,7 +5,6 @@ import pickle
 import lightgbm as lgb
 from datetime import datetime
 from sklearn.preprocessing import LabelEncoder
-from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import r2_score, mean_squared_error
 import holidays
 import warnings
@@ -21,16 +20,19 @@ class AccidentPredictor:
         self.feature_names = []
         self.treinado = False
         self.best_params = {}
-        self.r2_score = None
-        self.rmse_score = None
+        self.r2_score_train = None
+        self.rmse_score_train = None
+        self.r2_score_test = None
+        self.rmse_score_test = None
         self.holidays_br = holidays.Brazil()
+        self.historical_df = None
 
     def _simplificar_clima(self, cond):
         if any(k in cond for k in ["Chuva", "Garoa"]):
             return "Chuva"
         if "Nublado" in cond:
             return "Nublado"
-        if any(k in cond for k in ["Céu Claro", "Sol"]):
+        if any(k in cond for k in ["Céu Claro", "Sol", "Bom"]):
             return "Bom"
         if "Vento" in cond:
             return "Vento"
@@ -50,13 +52,12 @@ class AccidentPredictor:
             uf=("uf", lambda x: x.mode()[0]),
             municipio=("municipio", lambda x: x.mode()[0]),
             tipo_acidente=("tipo_acidente", lambda x: x.mode()[0]),
-            condicao_metereologica=("condicao_metereologica", lambda x: x.mode()[0]), # Manter o nome original
+            condicao_metereologica=("condicao_metereologica", lambda x: x.mode()[0]),
             hora_media=("hora", "mean")
         ).reset_index()
-        # Aplicar _simplificar_clima após a agregação para a coluna 'clima'
-        agg["clima"] = agg["condicao_metereologica"].apply(self._simplificar_clima)
-        agg = agg.drop(columns=["condicao_metereologica"]) # Remover a coluna original após simplificação
 
+        agg["clima"] = agg["condicao_metereologica"].apply(self._simplificar_clima)
+        agg = agg.drop(columns=["condicao_metereologica"])
         return agg.sort_values("data").reset_index(drop=True)
 
     def _criar_features(self, df):
@@ -74,8 +75,6 @@ class AccidentPredictor:
         df["dia_ano_sin"] = np.sin(2 * np.pi * df["dia_ano"] / 365.25)
         df["dia_ano_cos"] = np.cos(2 * np.pi * df["dia_ano"] / 365.25)
 
-        # Lags e médias móveis só fazem sentido se houver a coluna 'acidentes'
-        # Durante a previsão, df_processado terá 'acidentes' = 0, então estas features serão 0
         if 'acidentes' in df.columns:
             for lag in [1, 2, 7, 14]:
                 df[f"lag_{lag}"] = df["acidentes"].shift(lag)
@@ -97,18 +96,11 @@ class AccidentPredictor:
                     enc = self.encoders[col]
                     df.loc[:, f"{col}_enc"] = df[col].apply(lambda x: enc.transform([x])[0] if x in enc.classes_ else -1)
                 else:
-                    # Isso só deve acontecer durante o treinamento inicial
                     enc = LabelEncoder()
                     df.loc[:, f"{col}_enc"] = enc.fit_transform(df[col])
                     self.encoders[col] = enc
             else:
-                # Se a coluna não estiver presente no df, mas o encoder existir (modo de previsão),
-                # preencher com um valor padrão (e.g., -1 para 'desconhecido')
-                if col in self.encoders:
-                    df.loc[:, f"{col}_enc"] = -1
-                else:
-                    # Se a coluna não existe e não há encoder, criar com 0 (caso de treinamento com dados incompletos)
-                    df.loc[:, f"{col}_enc"] = 0
+                df.loc[:, f"{col}_enc"] = 0
 
         features = [
             "ano", "mes", "dia_semana", "dia_ano", "semana", "fim_semana",
@@ -122,83 +114,35 @@ class AccidentPredictor:
         y = df["acidentes"] if "acidentes" in df.columns else None
         return df[features], y
 
-    def _otimizar_parametros(self, X, y, grid):
-        tscv = TimeSeriesSplit(n_splits=5)
-        best_rmse, best = np.inf, None
-
-        for combo in itertools.product(*grid.values()):
-            params = dict(zip(grid.keys(), combo))
-            rmses = []
-            for tr, val in tscv.split(X):
-                X_tr, X_val = X.iloc[tr], X.iloc[val]
-                y_tr, y_val = y.iloc[tr], y.iloc[val]
-
-                m = lgb.LGBMRegressor(**params, random_state=42, verbosity=-1)
-                m.fit(X_tr, y_tr, eval_set=[(X_val, y_val)], callbacks=[lgb.early_stopping(50, verbose=False)])
-                y_pred = np.clip(np.round(m.predict(X_val)), 0, None)
-                rmses.append(np.sqrt(mean_squared_error(y_val, y_pred)))
-
-            mean_rmse = np.mean(rmses)
-            if mean_rmse < best_rmse:
-                best_rmse, best = mean_rmse, params
-
-        return best
-
     def treinar(self, arquivo_json):
         with open(arquivo_json, "r", encoding="utf-8") as f:
             df = pd.DataFrame(json.load(f))
 
         df = self._processar_dados(df)
+        self.historical_df = df.copy() # Salva o df agregado para usar no contexto histórico
         X, y = self._criar_features(df)
-
-        if X.empty:
-            raise ValueError("Erro: DataFrame vazio após processamento.")
-
         self.feature_names = X.columns.tolist()
-        grid = {
-            "n_estimators": [100, 200],
-            "learning_rate": [0.05, 0.1],
-            "num_leaves": [20, 31],
-            "max_depth": [-1, 10]
-        }
 
-        self.best_params = self._otimizar_parametros(X, y, grid)
-        self.modelo = lgb.LGBMRegressor(**self.best_params, random_state=42)
-        self.modelo.fit(X, y)
+        # Separação temporal 70% treino / 30% teste
+        split_index = int(len(X) * 0.7)
+        X_train, X_test = X.iloc[:split_index], X.iloc[split_index:]
+        y_train, y_test = y.iloc[:split_index], y.iloc[split_index:]
 
-        y_pred = np.clip(np.round(self.modelo.predict(X)), 0, None)
-        self.r2_score = r2_score(y, y_pred)
-        self.rmse_score = np.sqrt(mean_squared_error(y, y_pred))
+        # Treinar modelo
+        self.modelo.fit(X_train, y_train)
+
+        # Avaliar desempenho
+        y_pred_train = np.clip(np.round(self.modelo.predict(X_train)), 0, None)
+        y_pred_test = np.clip(np.round(self.modelo.predict(X_test)), 0, None)
+
+        self.r2_score_train = r2_score(y_train, y_pred_train)
+        self.rmse_score_train = np.sqrt(mean_squared_error(y_train, y_pred_train))
+        self.r2_score_test = r2_score(y_test, y_pred_test)
+        self.rmse_score_test = np.sqrt(mean_squared_error(y_test, y_pred_test))
         self.treinado = True
 
-        print(f"Treinamento concluído | R²: {self.r2_score:.4f} | RMSE: {self.rmse_score:.2f}")
-
-    def prever(self, df_novos_dados):
-        if not self.treinado:
-            raise RuntimeError("Treine o modelo antes de fazer previsões.")
-
-        df_processado = self._processar_dados(df_novos_dados.copy())
-        
-        # Para a previsão, precisamos garantir que as colunas categóricas originais
-        # estejam presentes no df_processado antes de _criar_features ser chamado.
-        # O _processar_dados já retorna as colunas agregadas (uf, municipio, etc.).
-        # No entanto, para a codificação, _criar_features precisa delas.
-        # O problema anterior era que _criar_features tentava acessar df[col] onde col era 'uf' etc.
-        # mas df_processado já tinha essas colunas agregadas.
-        # A solução é garantir que _criar_features possa lidar com a ausência de 'acidentes'
-        # e que os encoders sejam aplicados corretamente.
-
-        X_prever, _ = self._criar_features(df_processado)
-
-        # Garantir que as colunas de previsão correspondam às colunas de treinamento
-        missing_cols = set(self.feature_names) - set(X_prever.columns)
-        for c in missing_cols:
-            X_prever[c] = 0
-        X_prever = X_prever[self.feature_names]
-
-        previsoes = np.clip(np.round(self.modelo.predict(X_prever)), 0, None)
-        df_processado["previsoes_acidentes"] = previsoes
-        return df_processado[["data", "previsoes_acidentes"]]
+        print(f"Treino (70%): R²={self.r2_score_train:.4f}, RMSE={self.rmse_score_train:.2f}")
+        print(f"Teste  (30%): R²={self.r2_score_test:.4f}, RMSE={self.rmse_score_test:.2f}")
 
     def salvar_modelo(self, nome="modelo_acidentes.pkl"):
         if not self.treinado:
@@ -209,11 +153,42 @@ class AccidentPredictor:
                 "modelo": self.modelo,
                 "encoders": self.encoders,
                 "features": self.feature_names,
-                "params": self.best_params,
-                "r2": self.r2_score,
-                "rmse": self.rmse_score
+                "r2_train": self.r2_score_train,
+                "rmse_train": self.rmse_score_train,
+                "r2_test": self.r2_score_test,
+                "rmse_test": self.rmse_score_test,
+                "historical_df": self.historical_df
             }, f)
         print(f"Modelo salvo: {nome}")
+        
+    def prever(self, df_input):
+        """
+        Realiza a previsão em um novo DataFrame de input (não-agregado).
+        Espera colunas: data_inversa, horario, uf, municipio, tipo_acidente, condicao_metereologica, hora_media.
+        """
+        if not self.treinado:
+            raise RuntimeError("O modelo não foi treinado.")
+        
+        # 1. Copia o DF de entrada
+        df = df_input.copy()
+        
+        # 2. Adiciona colunas para feature engineering
+        df["data"] = pd.to_datetime(df["data_inversa"], format="%d/%m/%Y", errors="coerce")
+        df["clima"] = df["condicao_metereologica"].apply(self._simplificar_clima)
+        
+        # 3. Cria as features com base na lógica de treinamento
+        X_input, _ = self._criar_features(df)
+        
+        # 4. Filtra apenas as features que o modelo espera e prevê
+        X_predict = X_input[self.feature_names]
+
+        # 5. Previsão
+        resultado = self.modelo.predict(X_predict)
+        
+        # Arredonda e garante que não é negativo
+        resultado_clipado = np.clip(np.round(resultado), 0, None).astype(int)
+        
+        return resultado_clipado
 
 
 if __name__ == "__main__":
